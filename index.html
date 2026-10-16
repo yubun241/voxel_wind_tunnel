@@ -7,32 +7,21 @@
 <title>ボクセル風洞</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
-html{color-scheme:light}
+html{color-scheme:dark}
 /* Layout: instrument console. Viewport center; controls left; readouts right. Stacks at phone width. */
 :root {
-  --bg: #eef1f4;
-  --panel: #f8f9fb;
-  --line: #d3d9e0;
-  --fg: #1b2430;
-  --muted: #5d6a78;
-  --accent: #d2601a;      /* drag */
-  --accent2: #1f7a8c;     /* downforce */
-  --ok: #2d8a4e;
-  --warn: #b7791f;
-  --bad: #c0392b;
+  --bg: #0d1116;
+  --panel: #151a21;
+  --line: #2a323c;
+  --fg: #e4e9ee;
+  --muted: #8e9aa7;
+  --accent: #f08a3e;      /* drag */
+  --accent2: #4fb3c6;     /* downforce */
+  --ok: #4fc277;
+  --warn: #e0a84a;
+  --bad: #e46a5c;
   --font-ui: "IBM Plex Sans JP", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #111519; --panel: #171c22; --line: #2a323c; --fg: #e4e9ee; --muted: #8e9aa7;
-    --accent: #f08a3e; --accent2: #4fb3c6; --ok: #4fc277; --warn: #e0a84a; --bad: #e46a5c;
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #111519; --panel: #171c22; --line: #2a323c; --fg: #e4e9ee; --muted: #8e9aa7;
-  --accent: #f08a3e; --accent2: #4fb3c6; --ok: #4fc277; --warn: #e0a84a; --bad: #e46a5c;
   color-scheme: dark;
 }
 html, body { height: 100%; }
