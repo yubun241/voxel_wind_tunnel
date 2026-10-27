@@ -35,7 +35,7 @@ GitHub のリポジトリ → **Settings → Pages → Build and deployment**:
 - Source: **Deploy from a branch**
 - Branch: **main** / **/ (root)** → Save
 
-数分後に `https://<user>.github.io/<repo>/` で公開されます。`.nojekyll` は Jekyll 処理を止めるためのファイルです (削除しないでください)。
+数分後に `https://yubun241.github.io/voxel_wind_tunnel/` で公開されます。`.nojekyll` は Jekyll 処理を止めるためのファイルです (削除しないでください)。
 
 ## ローカルで試す
 
