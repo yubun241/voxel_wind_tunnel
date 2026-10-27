@@ -81,6 +81,11 @@ th { color: var(--muted); font-weight: 500; }
 .tblwrap { overflow-x: auto; }
 td button { padding: 1px 6px; font-size: 11px; }
 .check { display: flex; align-items: center; gap: 6px; margin: 5px 0; }
+.rot { display: grid; grid-template-columns: 1fr; gap: 2px; margin: 6px 0; }
+.rot label { font-size: 12px; }
+.rot input[type=range] { grid-column: 1; }
+.rot input[type=number] { width: 70px; justify-self: end; }
+@media (min-width: 901px) { .rot { grid-template-columns: 1fr 70px; } .rot label { grid-column: 1 / -1; } }
 @media (max-width: 900px) {
   #body { grid-template-columns: 1fr; grid-template-rows: 55vh auto auto; overflow-y: auto; }
   #view { order: 0; }
@@ -115,11 +120,25 @@ td button { padding: 1px 6px; font-size: 11px; }
         </div>
         <p class="hint" id="modelHint">モデル未読込。検証用プリセットは Cd の実験値付き。</p>
         <div class="row"><label for="unit">STL の単位</label><select id="unit"><option value="0.001" selected>mm</option><option value="0.01">cm</option><option value="1">m</option><option value="0.0254">inch</option></select></div>
+      </section>
+      <section>
+        <h2>向き</h2>
         <div class="row"><label for="flowAxis">流れ方向 (モデル座標)</label><select id="flowAxis"><option value="+x" selected>+X</option><option value="-x">−X</option><option value="+y">+Y</option><option value="-y">−Y</option><option value="+z">+Z</option><option value="-z">−Z</option></select></div>
         <div class="row"><label for="upAxis">上方向 (モデル座標)</label><select id="upAxis"><option value="z" selected>Z</option><option value="y">Y</option><option value="x">X</option></select></div>
+        <div class="rot"><label for="yaw">ヨー (上軸まわり)</label><input type="range" id="yaw" min="-180" max="180" step="1" value="0"><input type="number" id="yawN" value="0" step="1"></div>
+        <div class="rot"><label for="pitch">ピッチ (迎角)</label><input type="range" id="pitch" min="-90" max="90" step="0.5" value="0"><input type="number" id="pitchN" value="0" step="0.5"></div>
+        <div class="rot"><label for="roll">ロール (流れ軸まわり)</label><input type="range" id="roll" min="-180" max="180" step="1" value="0"><input type="number" id="rollN" value="0" step="1"></div>
+        <div class="btns"><button id="rotReset">0 / 0 / 0</button><button data-rot="yaw,90">ヨー +90°</button><button data-rot="pitch,90">ピッチ +90°</button><button data-rot="roll,90">ロール +90°</button></div>
+        <p class="hint">Alt + ドラッグでヨー / ピッチを直接回せます。変更は即プレビュー、計算には「準備」が必要です。</p>
+      </section>
+      <section>
+        <h2>境界・取付</h2>
+        <div class="row"><label for="groundType">地面 (z = 0)</label><select id="groundType"><option value="belt" selected>ムービングベルト (= U)</option><option value="wall">静止壁</option><option value="none">なし (自由流)</option></select></div>
+        <div class="row"><label for="mount">取付面 (壁に密着)</label><select id="mount"><option value="none" selected>なし (自由配置)</option><option value="-z">底面 → 地面</option><option value="+z">上面 → 天井</option><option value="-y">左側面 → 側壁</option><option value="+y">右側面 → 側壁</option></select></div>
+        <div class="row" id="mountWallRow" hidden><label for="mountWall">取付壁の種類</label><select id="mountWall"><option value="wall" selected>静止壁 (車体表面など)</option><option value="slip">滑り壁 (対称面 / 半モデル)</option></select></div>
+        <div class="row" id="clearRow"><label for="clear">地上高</label><div><input type="number" id="clear" value="50" min="0" step="1"><span class="unit" id="clearUnit">mm</span></div></div>
         <div class="row"><label for="occ">流れ方向の格子占有率</label><div><input type="number" id="occ" value="0.35" min="0.15" max="0.6" step="0.05"></div></div>
-        <div class="check"><input type="checkbox" id="ground" checked><label for="ground">地面あり (ムービングベルト = U)</label></div>
-        <div class="row"><label for="clear">地上高</label><div><input type="number" id="clear" value="50" min="0" step="1"><span class="unit" id="clearUnit">mm</span></div></div>
+        <p class="hint" id="mountHint">取付面は壁の第 1 層に密着し、その面は流体に触れないため力に寄与しません。露出面だけで Cd / Cl を評価します。</p>
       </section>
       <section>
         <h2>格子</h2>
@@ -228,9 +247,13 @@ const S = {
 // ---------------------------------------------------------------- STL
 function parseSTL(buf) {
   const dv = new DataView(buf);
+  const head = new TextDecoder('latin1').decode(new Uint8Array(buf, 0, Math.min(1024, buf.byteLength)));
+  const looksAscii = /^\s*solid/i.test(head) && /facet|vertex/i.test(head);
+  // バイナリ判定: 三角形数から期待されるサイズ以上あれば末尾の余分なバイトは許容する (一部 CAD の書き出し対策)
   if (buf.byteLength >= 84) {
     const n = dv.getUint32(80, true);
-    if (84 + n * 50 === buf.byteLength) {
+    const fits = n > 0 && 84 + n * 50 <= buf.byteLength;
+    if (fits && (!looksAscii || 84 + n * 50 === buf.byteLength)) {
       const out = new Float32Array(n * 9);
       for (let i = 0; i < n; i++) {
         const o = 84 + i * 50 + 12;
@@ -240,10 +263,12 @@ function parseSTL(buf) {
     }
   }
   const txt = new TextDecoder().decode(buf);
-  const re = /vertex\s+([-+\deE.]+)\s+([-+\deE.]+)\s+([-+\deE.]+)/g;
+  const re = /vertex\s+([-+\d.eE]+)\s+([-+\d.eE]+)\s+([-+\d.eE]+)/g;
   const v = []; let m;
   while ((m = re.exec(txt))) v.push(+m[1], +m[2], +m[3]);
-  return new Float32Array(v.slice(0, v.length - (v.length % 9)));
+  const arr = new Float32Array(v.slice(0, v.length - (v.length % 9)));
+  if (arr.length === 0) throw new Error('STL として解釈できませんでした (バイナリ / ASCII のどちらにも一致しません)。');
+  return arr;
 }
 
 // ---------------------------------------------------------------- presets (mm)
@@ -298,27 +323,54 @@ function axisVec(s) { const sign = s[0] === '-' ? -1 : 1; const a = s[s.length -
 function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
 function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
+function boundaryConfig() {
+  const mount = $('mount').value, ground = $('groundType').value, mw = $('mountWall').value;
+  const wallFlag = mw === 'slip' ? 4 : 3;
+  // z=0 層: ベルト(2) / 静止壁(3) / なし(0)。底面取付で地面なしなら静止壁にする。
+  let zlo = ground === 'belt' ? 2 : ground === 'wall' ? 3 : 0;
+  if (mount === '-z' && zlo === 0) zlo = 3;
+  return { mount, zlo, zhi: mount === '+z' ? wallFlag : 0, ylo: mount === '-y' ? wallFlag : 0, yhi: mount === '+y' ? wallFlag : 0, hasGround: zlo !== 0 };
+}
+function rotMat(yaw, pitch, roll) {
+  const d = Math.PI / 180, cy = Math.cos(yaw * d), sy = Math.sin(yaw * d), cp = Math.cos(pitch * d), sp = Math.sin(pitch * d), cr = Math.cos(roll * d), sr = Math.sin(roll * d);
+  // R = Rz(yaw) · Ry(pitch) · Rx(roll)  (x: 流れ, y: 横, z: 上)
+  return [
+    cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr,
+    sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
+    -sp, cp * sr, cp * cr ];
+}
 function placeModel() {
   if (!S.tris) return null;
   const ef = axisVec($('flowAxis').value), eu = axisVec($('upAxis').value);
-  if (Math.abs(dot(ef, eu)) > 0.5) { $('modelHint').textContent = '流れ方向と上方向に同じ軸は使えません。'; $('modelHint').className = 'hint bad'; return null; }
+  if (Math.abs(dot(ef, eu)) > 0.5) { setHint('modelHint', '流れ方向と上方向に同じ軸は使えません。', 'bad'); return null; }
   const ey = cross(eu, ef);
   const n = S.tris.length / 3, p = new Float32Array(S.tris.length);
+  const R = rotMat(+$('yawN').value, +$('pitchN').value, +$('rollN').value);
+  // 回転中心 = モデル座標での bbox 中心
+  let c = [0, 0, 0];
+  { let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < n; i++) for (let k = 0; k < 3; k++) { const v = S.tris[i * 3 + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; }
+    c = [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, (mn[2] + mx[2]) / 2]; }
   let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < n; i++) {
-    const v = [S.tris[i * 3], S.tris[i * 3 + 1], S.tris[i * 3 + 2]];
-    const q = [dot(v, ef), dot(v, ey), dot(v, eu)];
+    const v = [S.tris[i * 3] - c[0], S.tris[i * 3 + 1] - c[1], S.tris[i * 3 + 2] - c[2]];
+    const a = [dot(v, ef), dot(v, ey), dot(v, eu)];
+    const q = [R[0] * a[0] + R[1] * a[1] + R[2] * a[2], R[3] * a[0] + R[4] * a[1] + R[5] * a[2], R[6] * a[0] + R[7] * a[1] + R[8] * a[2]];
     for (let k = 0; k < 3; k++) { p[i * 3 + k] = q[k]; if (q[k] < mn[k]) mn[k] = q[k]; if (q[k] > mx[k]) mx[k] = q[k]; }
   }
   const len = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]];
-  const unit = +$('unit').value, ground = $('ground').checked, clear = +$('clear').value;
+  const unit = +$('unit').value, clear = +$('clear').value;
+  const B = boundaryConfig(), mount = B.mount;
   const occ = Math.min(0.6, Math.max(0.15, +$('occ').value));
   const { nx, ny, nz } = S;
   let s = occ * nx / len[0];
-  s = Math.min(s, 0.7 * ny / len[1]);
-  s = Math.min(s, ground ? (0.75 * nz) / (len[2] + clear) : 0.7 * nz / len[2]);
-  const x0 = 0.2 * nx, y0 = (ny - len[1] * s) / 2;
-  const z0 = ground ? 1.5 + clear * s : (nz - len[2] * s) / 2;
+  s = Math.min(s, (mount === '-y' || mount === '+y' ? 0.85 : 0.7) * ny / len[1]);
+  if (mount === '-z' || mount === '+z') s = Math.min(s, 0.8 * nz / len[2]);
+  else s = Math.min(s, B.hasGround ? (0.75 * nz) / (len[2] + clear) : 0.7 * nz / len[2]);
+  const x0 = 0.2 * nx;
+  // 取付面は壁層 (y=0 / y=ny-1 / z=0 / z=nz-1) に 0.1 cell 食い込ませて密着させる
+  const y0 = mount === '-y' ? 0.9 : mount === '+y' ? ny - 0.9 - len[1] * s : (ny - len[1] * s) / 2;
+  const z0 = mount === '-z' ? 0.9 : mount === '+z' ? nz - 0.9 - len[2] * s : B.hasGround ? 1.0 + clear * s : (nz - len[2] * s) / 2;
   const lat = new Float32Array(p.length);
   for (let i = 0; i < n; i++) {
     lat[i * 3] = (p[i * 3] - mn[0]) * s + x0;
@@ -387,7 +439,12 @@ function voxelize() {
     const cy = c % ny, cz = (c / ny) | 0;
     for (let x = 1; x < nx - 1; x++) if (flags[x + nx * (cy + ny * cz)]) { area++; break; }
   }
-  if ($('ground').checked) for (let i = 0; i < nx * ny; i++) if (!flags[i]) flags[i] = 2;
+  // 壁層: 取付面の壁は物体セルも含めて上書き (密着面を流体から隔離)
+  const B = boundaryConfig();
+  if (B.zlo) for (let i = 0; i < nx * ny; i++) flags[i] = B.zlo;
+  if (B.zhi) for (let i = 0; i < nx * ny; i++) flags[nx * ny * (nz - 1) + i] = B.zhi;
+  if (B.ylo) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) flags[x + nx * (0 + ny * z)] = B.ylo;
+  if (B.yhi) for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) flags[x + nx * ((ny - 1) + ny * z)] = B.yhi;
   S.flags = flags; S.areaCells = area;
 }
 
@@ -458,7 +515,16 @@ fn stepKernel(@builtin(global_invocation_id) gid: vec3<u32>) {
       let fo = fin[o * n + idx];
       let co = cvec(o);
       if (nf == 1u) { f[i] = fo; force += 2.0 * fo * co; }
-      else { f[i] = fo - 6.0 * W[o] * dot(co, uinv); }
+      else if (nf == 2u) { f[i] = fo - 6.0 * W[o] * dot(co, uinv); }
+      else if (nf == 3u) { f[i] = fo; }
+      else {
+        // 滑り壁 (対称面): 法線成分だけ反転した方向の分布を鏡面反射
+        var d = vec3<i32>(CX[i], CY[i], CZ[i]);
+        if (sz == 0 || sz == i32(nz) - 1) { d.z = -d.z; } else { d.y = -d.y; }
+        var r = o;
+        for (var j = 0u; j < 19u; j++) { if (CX[j] == d.x && CY[j] == d.y && CZ[j] == d.z) { r = j; } }
+        f[i] = fin[r * n + idx];
+      }
     }
   }
   var rho = 0.0; var m = vec3<f32>(0.0);
@@ -615,6 +681,7 @@ function updateCamera() {
 const cv = $('gl');
 cv.addEventListener('pointerdown', e => { orbit.drag = true; orbit.px = e.clientX; orbit.py = e.clientY; cv.setPointerCapture(e.pointerId); });
 cv.addEventListener('pointermove', e => { if (!orbit.drag) return; const dx = e.clientX - orbit.px, dy = e.clientY - orbit.py; orbit.px = e.clientX; orbit.py = e.clientY;
+  if (e.altKey && S.tris) { setRot('yaw', +$('yawN').value + dx * 0.5); setRot('pitch', +$('pitchN').value - dy * 0.5); return; }
   if (e.shiftKey || e.buttons === 2) { const s = orbit.r * 0.002; const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0), up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1); orbit.target.addScaledVector(right, -dx * s).addScaledVector(up, dy * s); }
   else { orbit.theta -= dx * 0.008; orbit.phi = Math.min(3.0, Math.max(0.1, orbit.phi - dy * 0.008)); } updateCamera(); });
 cv.addEventListener('pointerup', () => orbit.drag = false);
@@ -623,15 +690,15 @@ cv.addEventListener('wheel', e => { e.preventDefault(); orbit.r *= Math.exp(e.de
 function resize() { const w = $('view').clientWidth, h = $('view').clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 window.addEventListener('resize', resize); resize();
 
-function buildDomain() {
+function buildDomain(resetCam = true) {
   const { nx, ny, nz } = S;
   inner.position.set(-nx / 2, -ny / 2, -nz / 2);
   if (domainLines) inner.remove(domainLines);
   domainLines = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(nx, ny, nz)), new THREE.LineBasicMaterial({ color: new THREE.Color(css('--muted')), transparent: true, opacity: 0.5 }));
   domainLines.position.set(nx / 2, ny / 2, nz / 2); inner.add(domainLines);
   if (groundGrid) scene.remove(groundGrid);
-  if ($('ground').checked) { groundGrid = new THREE.GridHelper(Math.max(nx, ny), 16, new THREE.Color(css('--line')), new THREE.Color(css('--line'))); groundGrid.position.y = -nz / 2 + 0.5; scene.add(groundGrid); }
-  orbit.r = nx * 1.6; orbit.target.set(0, 0, 0); updateCamera();
+  if (boundaryConfig().hasGround) { groundGrid = new THREE.GridHelper(Math.max(nx, ny), 16, new THREE.Color(css('--line')), new THREE.Color(css('--line'))); groundGrid.position.y = -nz / 2 + 0.5; scene.add(groundGrid); }
+  if (resetCam) { orbit.r = nx * 1.6; orbit.target.set(0, 0, 0); updateCamera(); }
 }
 function buildModelMesh() {
   if (modelMesh) { inner.remove(modelMesh); modelMesh.geometry.dispose(); }
@@ -765,20 +832,27 @@ function refArea() { return $('areaMode').value === 'auto' ? S.areaCells * S.dx 
 // ---------------------------------------------------------------- prep / run
 async function prep() {
   if (!S.tris) { setHint('prepHint', 'まずモデルを読み込んでください。', 'bad'); return; }
+  S.prepping = true;
+  try { await prepInner(); } finally { S.prepping = false; }
+}
+async function prepInner() {
   stop();
   [S.nx, S.ny, S.nz] = $('grid').value.split(',').map(Number);
   const n = S.nx * S.ny * S.nz;
   if (S.solver && S.solver.bytesNeeded(n) > S.solver.maxBuf) { setHint('prepHint', `この GPU のバッファ上限 (${(S.solver.maxBuf / 1048576) | 0} MB) を超えます。解像度を下げてください。`, 'bad'); return; }
   setHint('prepHint', 'ボクセル化中…');
-  while (S.fieldPending || S.forcePending) await new Promise(r => setTimeout(r, 20));
+  for (let i = 0; i < 100 && (S.fieldPending || S.forcePending); i++) await new Promise(r => setTimeout(r, 20));
+  S.fieldPending = S.forcePending = false;
   await new Promise(r => setTimeout(r, 10));
   if (!placeModel()) return;
-  const t0 = performance.now(); voxelize(); const tv = performance.now() - t0;
+  let tv = 0;
+  try { const t0 = performance.now(); voxelize(); tv = performance.now() - t0; }
+  catch (e) { setHint('prepHint', 'ボクセル化に失敗: ' + e.message, 'bad'); return; }
   computeScaling();
   const solid = S.flags.reduce((a, v) => a + (v === 1 ? 1 : 0), 0);
   const minLen = Math.min(...S.latBox.len);
   setHint('prepHint', `固体セル ${solid.toLocaleString()} / 前面投影 ${S.areaCells.toLocaleString()} cells / ボクセル化 ${tv.toFixed(0)} ms` + (minLen < 6 ? `  ⚠ 最小厚み ${minLen.toFixed(1)} cells。薄すぎます。解像度を上げるか占有率を上げてください。` : ''), minLen < 6 ? 'warn' : '');
-  buildDomain(); buildModelMesh();
+  buildDomain(S.needCam); S.needCam = false; buildModelMesh();
   S.solver.init(S.nx, S.ny, S.nz, S.flags);
   S.step = 0; S.hist = []; S.mac = null; S.lastField = 0;
   if (streamLines) { inner.remove(streamLines); streamLines = null; }
@@ -786,6 +860,25 @@ async function prep() {
   colorSurfaceCp(null);
   $('btnRun').disabled = false; $('btnReset').disabled = false;
   updateReadouts();
+}
+let previewQueued = false;
+function preview() {
+  if (!S.tris || previewQueued) return;
+  previewQueued = true;
+  requestAnimationFrame(() => {
+    previewQueued = false;
+    if (S.prepping) return;
+    stop();
+    [S.nx, S.ny, S.nz] = $('grid').value.split(',').map(Number);
+    if (!placeModel()) return;
+    S.flags = null; S.mac = null; S.hist = [];
+    if (streamLines) { inner.remove(streamLines); streamLines = null; }
+    if (sliceMesh) { inner.remove(sliceMesh); sliceMesh = null; }
+    buildDomain(S.needCam); S.needCam = false; buildModelMesh(); colorSurfaceCp(null);
+    $('btnRun').disabled = true; $('btnReset').disabled = true;
+    setHint('prepHint', '配置を変更しました。「準備」で再ボクセル化してください。', 'warn');
+    updateReadouts();
+  });
 }
 function start() { if (!S.flags) return; S.running = true; $('btnRun').textContent = '❚❚ 一時停止'; $('runChip').textContent = '計算中'; $('runChip').className = 'chip run'; S.rateT = performance.now(); S.rateN = 0; }
 function stop() { S.running = false; $('btnRun').textContent = '▶ 実行'; $('runChip').textContent = '停止'; $('runChip').className = 'chip'; }
@@ -797,15 +890,15 @@ async function frame() {
   if (S.running && S.solver) {
     const k = Math.max(1, Math.min(32, +$('spf').value | 0));
     const ramp = Math.min(1, S.step / RAMP);
-    S.solver.setParams(S.tau0, S.uin * ramp, +$('cs').value, $('ground').checked ? 1 : 0);
+    S.solver.setParams(S.tau0, S.uin * ramp, +$('cs').value, boundaryConfig().hasGround ? 1 : 0);
     S.solver.step(k); S.step += k; S.rateN += k;
     const now = performance.now();
     if (now - S.rateT > 1000) { $('rateChip').textContent = Math.round(S.rateN * 1000 / (now - S.rateT)) + ' steps/s'; S.rateT = now; S.rateN = 0; }
     if (!S.forcePending && S.step % FORCE_EVERY < k) {
       S.forcePending = true;
       const stepAt = S.step;
-      S.solver.sampleForce().then(F => {
-        S.forcePending = false;
+      S.solver.sampleForce().catch(() => null).then(F => {
+        S.forcePending = false; if (!F) return;
         if (!Number.isFinite(F[0] + F[1] + F[2])) { stop(); setHint('prepHint', '発散しました。τ 下限を上げる、u_lb を下げる、解像度を上げる、のいずれかを試してください。', 'bad'); return; }
         const A = refAreaCells() || 1;
         S.hist.push({ step: stepAt, cd: F[0] / (0.5 * S.uin * S.uin * A), cl: F[2] / (0.5 * S.uin * S.uin * A), cy: F[1] / (0.5 * S.uin * S.uin * A), F });
@@ -814,7 +907,7 @@ async function frame() {
     }
     if (!S.fieldPending && now - S.lastField > FIELD_MS) {
       S.fieldPending = true;
-      S.solver.sampleField().then(mac => { S.fieldPending = false; S.lastField = performance.now(); S.mac = mac; refreshVisuals(); });
+      S.solver.sampleField().catch(() => null).then(mac => { S.fieldPending = false; S.lastField = performance.now(); if (!mac) return; S.mac = mac; refreshVisuals(); });
     }
   }
   renderer.render(scene, camera);
@@ -883,8 +976,9 @@ $('btnSave').addEventListener('click', () => {
   saveRuns(rs); renderRuns(); $('runName').value = '';
 });
 renderRuns();
-function clearAll() {
+async function clearAll() {
   stop();
+  for (let i = 0; i < 100 && (S.fieldPending || S.forcePending); i++) await new Promise(r => setTimeout(r, 20));
   RUNS = [];
   S.tris = null; S.lat = null; S.latBox = null; S.flags = null; S.mac = null; S.hist = []; S.step = 0; S.modelName = '';
   if (S.solver) S.solver.destroyBuffers();
@@ -898,19 +992,48 @@ $('btnClearAll').addEventListener('click', clearAll);
 
 // ---------------------------------------------------------------- UI wiring
 function setModel(tris, name, ref) {
-  S.tris = tris; S.modelName = name; S.presetRef = ref || '';
+  S.tris = tris; S.modelName = name; S.presetRef = ref || ''; S.needCam = true;
   let mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < tris.length; i += 3) for (let k = 0; k < 3; k++) { mn[k] = Math.min(mn[k], tris[i + k]); mx[k] = Math.max(mx[k], tris[i + k]); }
   const u = +$('unit').value;
   setHint('modelHint', `${name}: ${(tris.length / 9).toLocaleString()} 三角形, 寸法 ${mx.map((v, k) => ((v - mn[k]) * u * 1000).toFixed(0)).join(' × ')} mm${ref ? '  |  ' + ref : ''}`);
   $('btnRun').disabled = true; $('btnReset').disabled = true; stop(); S.flags = null;
+  preview();
 }
 $('btnFile').addEventListener('click', () => $('file').click());
-$('file').addEventListener('change', async e => { const f = e.target.files[0]; if (!f) return; setModel(parseSTL(await f.arrayBuffer()), f.name); });
+$('file').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { setModel(parseSTL(await f.arrayBuffer()), f.name); }
+  catch (err) { setHint('modelHint', `${f.name}: 読み込み失敗。${err.message}`, 'bad'); }
+  e.target.value = '';
+});
 $('pSphere').addEventListener('click', () => { $('unit').value = '0.001'; $('clear').value = 50; setModel(sphereMesh(), '球 Ø100 mm', '参考 Cd ≈ 0.47 (Re 10³〜2×10⁵)'); });
 $('pCube').addEventListener('click', () => { $('unit').value = '0.001'; $('clear').value = 50; setModel(cubeMesh(), '立方体 100 mm', '参考 Cd ≈ 1.05'); });
-$('pAhmed').addEventListener('click', () => { $('unit').value = '0.001'; $('clear').value = 50; $('ground').checked = true; setModel(ahmedMesh(), 'Ahmed body (25°)', '参考 Cd ≈ 0.285, Cl ≈ +0.35 (Ahmed 1984, 地上高 50 mm)'); });
-$('unit').addEventListener('change', () => { $('clearUnit').textContent = $('unit').selectedOptions[0].text; });
+$('pAhmed').addEventListener('click', () => { $('unit').value = '0.001'; $('clear').value = 50; $('groundType').value = 'belt'; $('mount').value = 'none'; syncMountUI(); setModel(ahmedMesh(), 'Ahmed body (25°)', '参考 Cd ≈ 0.285, Cl ≈ +0.35 (Ahmed 1984, 地上高 50 mm)'); });
+$('unit').addEventListener('change', () => { $('clearUnit').textContent = $('unit').selectedOptions[0].text; preview(); });
+function wrapDeg(v, lim) { v = ((v + lim) % (2 * lim) + 2 * lim) % (2 * lim) - lim; return Math.round(v * 2) / 2; }
+function setRot(k, v) {
+  const lim = k === 'pitch' ? 90 : 180;
+  v = k === 'pitch' ? Math.max(-90, Math.min(90, v)) : wrapDeg(v, lim);
+  $(k).value = v; $(k + 'N').value = v; preview();
+}
+for (const k of ['yaw', 'pitch', 'roll']) {
+  $(k).addEventListener('input', () => setRot(k, +$(k).value));
+  $(k + 'N').addEventListener('change', () => setRot(k, +$(k + 'N').value));
+}
+$('rotReset').addEventListener('click', () => { for (const k of ['yaw', 'pitch', 'roll']) { $(k).value = 0; $(k + 'N').value = 0; } preview(); });
+for (const b of document.querySelectorAll('button[data-rot]')) b.addEventListener('click', () => { const [k, d] = b.dataset.rot.split(','); setRot(k, +$(k + 'N').value + +d); });
+function syncMountUI() {
+  const m = $('mount').value, g = $('groundType').value;
+  $('mountWallRow').hidden = (m === 'none' || m === '-z');
+  $('clearRow').hidden = !(m !== '-z' && m !== '+z' && g !== 'none');
+  const B = boundaryConfig();
+  $('mountHint').textContent = m === 'none' ? '自由配置。地面ありなら地上高で浮かせます。'
+    : m === '-z' ? `底面を地面 (${B.zlo === 2 ? 'ムービングベルト' : '静止壁'}) に密着。ベルト上に固定するのは物理的に不自然なので、車体取付部品なら「静止壁」推奨。`
+    : '取付面は壁の第 1 層に密着し、流体に触れないため力に寄与しません。対称面 (半モデル) なら「滑り壁」を選んでください。';
+}
+for (const id of ['flowAxis', 'upAxis', 'groundType', 'mount', 'mountWall', 'clear', 'occ', 'grid']) $(id).addEventListener('change', () => { syncMountUI(); preview(); });
+syncMountUI();
 $('areaMode').addEventListener('change', () => { $('areaRow').hidden = $('areaMode').value !== 'manual'; if (S.flags) computeScaling(); });
 for (const id of ['U', 'nu', 'ulb', 'tauMin', 'area']) $(id).addEventListener('change', () => { if (S.flags) { computeScaling(); S.hist = []; updateReadouts(); } });
 $('grid').addEventListener('change', updateGridHint);
@@ -932,7 +1055,7 @@ $('showModel').addEventListener('change', () => { if (modelMesh) modelMesh.visib
     $('msg').hidden = true;
   } catch (e) {
     $('gpuChip').textContent = 'WebGPU なし'; $('gpuChip').className = 'chip bad';
-    $('msg').textContent = e.message + ' 計算部は WebGPU 必須です (Chrome 113+ / Edge 113+ / Safari 26+、HTTPS)。Firefox は 141+ の Windows 版のみ対応。';
+    $('msg').textContent = e.message + ' 計算部は WebGPU 必須です (Chrome 113+ / Edge 113+ / Safari 26+、HTTPS)。';
     $('btnPrep').disabled = true;
   }
   updateCamera(); frame();
